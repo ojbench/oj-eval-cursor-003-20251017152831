@@ -63,6 +63,7 @@ struct SystemState {
     // Last flushed ranking (vector of indices into teams)
     vector<int> lastFlushedOrder;
     bool hasFlushedAtLeastOnce = false;
+    vector<int> teamRank; // 1-based rank positions for last flushed (or lex before first flush)
 };
 
 static void resetVisibleAggregates(TeamState &team) {
@@ -114,11 +115,15 @@ static void updateLastFlushedOrderLex(SystemState &sys) {
     stable_sort(order.begin(), order.end(), [&](int a, int b){ return sys.teams[a].name < sys.teams[b].name; });
     sys.lastFlushedOrder = move(order);
     sys.hasFlushedAtLeastOnce = false;
+    sys.teamRank.assign(sys.teams.size(), 0);
+    for (size_t i = 0; i < sys.lastFlushedOrder.size(); ++i) sys.teamRank[sys.lastFlushedOrder[i]] = (int)i + 1;
 }
 
 static void performFlush(SystemState &sys) {
     sys.lastFlushedOrder = computeCurrentOrder(sys);
     sys.hasFlushedAtLeastOnce = true;
+    sys.teamRank.assign(sys.teams.size(), 0);
+    for (size_t i = 0; i < sys.lastFlushedOrder.size(); ++i) sys.teamRank[sys.lastFlushedOrder[i]] = (int)i + 1;
     cout << "[Info]Flush scoreboard.\n";
 }
 
@@ -297,6 +302,8 @@ static void scroll(SystemState &sys) {
     // Treat the final scoreboard after scrolling as flushed for future queries
     sys.lastFlushedOrder = order;
     sys.hasFlushedAtLeastOnce = true;
+    sys.teamRank.assign(sys.teams.size(), 0);
+    for (size_t i = 0; i < sys.lastFlushedOrder.size(); ++i) sys.teamRank[sys.lastFlushedOrder[i]] = (int)i + 1;
 }
 
 static void addTeam(SystemState &sys, const string &teamName) {
@@ -378,21 +385,7 @@ static void queryRanking(const SystemState &sys, const string &teamName) {
         cout << "[Warning]Scoreboard is frozen. The ranking may be inaccurate until it were scrolled.\n";
     }
     int teamIdx = it->second;
-    int ranking = 0;
-    if (sys.lastFlushedOrder.empty()) {
-        // before any flush: lex order
-        vector<pair<string,int>> arr;
-        arr.reserve(sys.teams.size());
-        for (size_t i = 0; i < sys.teams.size(); ++i) arr.emplace_back(sys.teams[i].name, (int)i);
-        stable_sort(arr.begin(), arr.end());
-        for (size_t i = 0; i < arr.size(); ++i) {
-            if (arr[i].second == teamIdx) { ranking = (int)i + 1; break; }
-        }
-    } else {
-        for (size_t i = 0; i < sys.lastFlushedOrder.size(); ++i) {
-            if (sys.lastFlushedOrder[i] == teamIdx) { ranking = (int)i + 1; break; }
-        }
-    }
+    int ranking = sys.teamRank.empty() ? 0 : sys.teamRank[teamIdx];
     cout << teamName << " NOW AT RANKING " << ranking << "\n";
 }
 
@@ -431,6 +424,21 @@ static void querySubmission(const SystemState &sys, const string &teamName, cons
     cout << "Cannot find any submission.\n";
 }
 
+static inline vector<string_view> splitBySpace(const string &line) {
+    vector<string_view> tokens;
+    size_t n = line.size();
+    size_t i = 0;
+    while (i < n) {
+        while (i < n && line[i] == ' ') ++i;
+        if (i >= n) break;
+        size_t j = i;
+        while (j < n && line[j] != ' ') ++j;
+        tokens.emplace_back(&line[i], j - i);
+        i = j;
+    }
+    return tokens;
+}
+
 int main() {
     ios::sync_with_stdio(false);
     cin.tie(nullptr);
@@ -440,57 +448,41 @@ int main() {
     string line;
     while (std::getline(cin, line)) {
         if (line.empty()) continue;
-        if (line.rfind("ADDTEAM ", 0) == 0) {
-            string teamName = line.substr(8);
+        auto tokens = splitBySpace(line);
+        if (tokens.empty()) continue;
+        if (tokens[0] == "ADDTEAM") {
+            string teamName(tokens[1]);
             addTeam(sys, teamName);
-        } else if (line.rfind("START ", 0) == 0) {
+        } else if (tokens[0] == "START") {
             // Format: START DURATION [duration_time] PROBLEM [problem_count]
-            string tmp;
-            stringstream ss(line);
-            ss >> tmp; // START
-            ss >> tmp; // DURATION
-            int duration; ss >> duration;
-            ss >> tmp; // PROBLEM
-            int probCnt; ss >> probCnt;
+            int duration = stoi(string(tokens[2]));
+            int probCnt = stoi(string(tokens[4]));
             startCompetition(sys, duration, probCnt);
-        } else if (line.rfind("SUBMIT ", 0) == 0) {
+        } else if (tokens[0] == "SUBMIT") {
             // SUBMIT [problem_name] BY [team_name] WITH [submit_status] AT [time]
-            string tmp;
-            string problemName; string teamName; string statusStr; int t;
-            stringstream ss(line);
-            ss >> tmp; // SUBMIT
-            ss >> problemName;
-            ss >> tmp; // BY
-            ss >> teamName;
-            ss >> tmp; // WITH
-            ss >> statusStr;
-            ss >> tmp; // AT
-            ss >> t;
-            submit(sys, problemName[0], teamName, parseStatus(statusStr), t);
-        } else if (line == "FLUSH") {
+            char problemChar = string(tokens[1])[0];
+            string teamName(tokens[3]);
+            string statusStr(tokens[5]);
+            int t = stoi(string(tokens[7]));
+            submit(sys, problemChar, teamName, parseStatus(statusStr), t);
+        } else if (tokens[0] == "FLUSH") {
             performFlush(sys);
-        } else if (line == "FREEZE") {
+        } else if (tokens[0] == "FREEZE") {
             enterFreeze(sys);
-        } else if (line == "SCROLL") {
+        } else if (tokens[0] == "SCROLL") {
             scroll(sys);
-        } else if (line.rfind("QUERY_RANKING ", 0) == 0) {
-            string teamName = line.substr(strlen("QUERY_RANKING "));
+        } else if (tokens[0] == "QUERY_RANKING") {
+            string teamName(tokens[1]);
             queryRanking(sys, teamName);
-        } else if (line.rfind("QUERY_SUBMISSION ", 0) == 0) {
+        } else if (tokens[0] == "QUERY_SUBMISSION") {
             // QUERY_SUBMISSION [team_name] WHERE PROBLEM=[problem_name] AND STATUS=[status]
-            // We'll parse by tokens and also '='
-            string tmp, teamName, where, problemToken, andToken, statusToken;
-            stringstream ss(line);
-            ss >> tmp; // QUERY_SUBMISSION
-            ss >> teamName;
-            ss >> where; // WHERE
-            ss >> problemToken; // PROBLEM=...
-            ss >> andToken; // AND
-            ss >> statusToken; // STATUS=...
+            string teamName(tokens[1]);
+            string problemToken(tokens[3]);
+            string statusToken(tokens[5]);
             string problemFilter = problemToken.substr(problemToken.find('=') + 1);
             string statusFilter = statusToken.substr(statusToken.find('=') + 1);
             querySubmission(sys, teamName, problemFilter, statusFilter);
-        } else if (line == "END") {
+        } else if (tokens[0] == "END") {
             cout << "[Info]Competition ends.\n";
             break;
         } else {
