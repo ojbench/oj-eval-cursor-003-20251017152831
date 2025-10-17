@@ -264,20 +264,22 @@ static void scroll(SystemState &sys) {
         // Apply unfreeze
         applyUnfreezeOneProblem(sys, teamIdx, probIdx);
 
-        // Reposition this team according to new aggregates
-        // Find its new position by moving up while it outranks predecessors
-        int newPos = idx;
-        while (newPos > 0 && rankingLess(sys, teamIdx, order[newPos - 1])) {
-            order[newPos] = order[newPos - 1];
-            --newPos;
+        // Reposition this team using binary search on the sorted order (excluding the team)
+        // Remove the team temporarily
+        order.erase(order.begin() + idx);
+        int lo = 0, hi = (int)order.size();
+        while (lo < hi) {
+            int mid = (lo + hi) >> 1;
+            if (rankingLess(sys, teamIdx, order[mid])) hi = mid; else lo = mid + 1;
         }
-        order[newPos] = teamIdx;
-
+        int newPos = lo;
+        // If moved up (better ranking), print ranking-change line
         if (newPos < idx) {
-            int replacedTeamIdx = order[newPos + 1];
+            int replacedTeamIdx = order[newPos];
             const TeamState &t = sys.teams[teamIdx];
             cout << t.name << ' ' << sys.teams[replacedTeamIdx].name << ' ' << t.solvedVisible << ' ' << t.penaltyVisible << "\n";
         }
+        order.insert(order.begin() + newPos, teamIdx);
     }
 
     // Output scoreboard after scrolling
@@ -292,6 +294,9 @@ static void scroll(SystemState &sys) {
             ps.frozenSubmissions.clear();
         }
     }
+    // Treat the final scoreboard after scrolling as flushed for future queries
+    sys.lastFlushedOrder = order;
+    sys.hasFlushedAtLeastOnce = true;
 }
 
 static void addTeam(SystemState &sys, const string &teamName) {
