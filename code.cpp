@@ -254,37 +254,65 @@ static void scroll(SystemState &sys) {
 
     // Current order that will update step by step
     vector<int> order = sys.lastFlushedOrder;
+    const int nTeams = (int)order.size();
+    vector<int> pos(nTeams, -1);
+    for (int i = 0; i < nTeams; ++i) pos[order[i]] = i;
 
-    while (true) {
-        int idx = findLowestRankedTeamWithFrozen(sys, order);
-        if (idx == -1) break;
-        int teamIdx = order[idx];
-        int probIdx = firstFrozenProblemIndex(sys.teams[teamIdx]);
-        if (probIdx == -1) { // should not happen
-            // remove this team from consideration and continue
-            // advance by moving idx upward
-            // But simpler: mark no frozen by clearing and continue
-            // (Handled by findLowestRankedTeamWithFrozen next iteration)
+    struct PairCmp {
+        bool operator()(const pair<int,int>& a, const pair<int,int>& b) const {
+            if (a.first != b.first) return a.first < b.first; // sort by position
+            return a.second < b.second;
         }
-        // Apply unfreeze
+    };
+    set<pair<int,int>, PairCmp> frozenSet; // (position, teamIdx)
+    vector<char> inFrozenSet(nTeams, 0);
+    for (int i = 0; i < nTeams; ++i) {
+        int teamIdx = order[i];
+        if (teamHasFrozenProblems(sys.teams[teamIdx])) {
+            frozenSet.emplace(i, teamIdx);
+            inFrozenSet[teamIdx] = 1;
+        }
+    }
+
+    while (!frozenSet.empty()) {
+        auto it = prev(frozenSet.end());
+        int idx = it->first;
+        int teamIdx = it->second;
+        frozenSet.erase(it);
+        inFrozenSet[teamIdx] = 0;
+
+        int probIdx = firstFrozenProblemIndex(sys.teams[teamIdx]);
+        if (probIdx == -1) continue; // nothing to unfreeze
+
+        // Apply unfreeze (updates team aggregates)
         applyUnfreezeOneProblem(sys, teamIdx, probIdx);
 
-        // Reposition this team using binary search on the sorted order (excluding the team)
-        // Remove the team temporarily
-        order.erase(order.begin() + idx);
-        int lo = 0, hi = (int)order.size();
-        while (lo < hi) {
-            int mid = (lo + hi) >> 1;
-            if (rankingLess(sys, teamIdx, order[mid])) hi = mid; else lo = mid + 1;
+        // Bubble up while outranking predecessors
+        int oldIdx = idx;
+        while (idx > 0 && rankingLess(sys, teamIdx, order[idx - 1])) {
+            int other = order[idx - 1];
+            swap(order[idx], order[idx - 1]);
+            pos[teamIdx] = idx - 1;
+            pos[other] = idx;
+            // If other is tracked in frozenSet, update its position entry
+            if (inFrozenSet[other]) {
+                frozenSet.erase({idx - 1, other});
+                frozenSet.emplace(idx, other);
+            }
+            --idx;
         }
-        int newPos = lo;
-        // If moved up (better ranking), print ranking-change line
-        if (newPos < idx) {
-            int replacedTeamIdx = order[newPos];
+        // If moved up, print ranking-change
+        if (idx < oldIdx) {
+            int replacedTeamIdx = order[idx + 1];
             const TeamState &t = sys.teams[teamIdx];
             cout << t.name << ' ' << sys.teams[replacedTeamIdx].name << ' ' << t.solvedVisible << ' ' << t.penaltyVisible << "\n";
         }
-        order.insert(order.begin() + newPos, teamIdx);
+
+        // If the team still has frozen problems, reinsert with new position
+        if (teamHasFrozenProblems(sys.teams[teamIdx])) {
+            frozenSet.emplace(idx, teamIdx);
+            inFrozenSet[teamIdx] = 1;
+        }
     }
 
     // Output scoreboard after scrolling
