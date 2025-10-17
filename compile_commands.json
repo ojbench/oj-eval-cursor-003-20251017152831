@@ -1,0 +1,8 @@
+[
+{
+  "directory": "/workspace/problem_003",
+  "command": "/usr/bin/c++   -O3 -DNDEBUG -std=gnu++17 -O2 -pipe -Wall -Wextra -Wshadow -Wconversion -Wno-sign-conversion -o CMakeFiles/code.dir/code.cpp.o -c /workspace/problem_003/code.cpp",
+  "file": "/workspace/problem_003/code.cpp",
+  "output": "CMakeFiles/code.dir/code.cpp.o"
+}
+]
